@@ -351,7 +351,6 @@ jobs:
           python - "$PREVIOUS_TAG" "$GITHUB_SHA" "$RELEASE_TAG" "$GITHUB_REPOSITORY" > release_notes.md <<'PY'
           import subprocess
           import sys
-          from datetime import date
 
           previous_tag, head_sha, release_tag, repository = sys.argv[1:]
           revision = f"{previous_tag}..{head_sha}" if previous_tag else head_sha
@@ -380,8 +379,6 @@ jobs:
                       break
               sections[category].append(f"- {subject} (`{commit}`)")
 
-          print(f"## [{release_tag.removeprefix('v')}] - {date.today().isoformat()}")
-          print()
           for category, commits in sections.items():
               if commits:
                   print(f"### {category}")
