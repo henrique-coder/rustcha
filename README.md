@@ -10,8 +10,8 @@ connection.
 uv add rustcha
 ```
 
-The package supports CPython 3.11 and newer. Building from source requires Rust
-1.88 or newer.
+The package supports CPython 3.11 through 3.15. Building from source requires
+Rust 1.88 or newer.
 
 ## Recognize text
 
@@ -122,7 +122,7 @@ Rust unit tests, lockfile checks, and Python integration tests.
 
 Every push to `prod` checks the versions in `pyproject.toml`, `Cargo.toml`, and
 `uv.lock`. When they match and are newer than the latest `v*` tag, GitHub
-Actions builds CPython 3.11+ ABI3 wheels for Linux, macOS, and Windows, publishes
+Actions builds CPython 3.11–3.15 ABI3 wheels for Linux, macOS, and Windows, publishes
 them to PyPI with `uv`, then creates the tag and GitHub release. Release notes
 list the commits since the previous tag in Keep a Changelog-style `Added`,
 `Changed`, `Fixed`, and `Removed` sections.
