@@ -13,6 +13,10 @@ uv add rustcha
 The package supports CPython 3.11 through 3.15. Building from source requires
 Rust 1.88 or newer.
 
+Pre-built wheels are available for Linux x86_64 and ARM64, Windows x86_64, and
+macOS ARM64. Other platforms can build from source when a compatible
+ONNX Runtime is available.
+
 ## Recognize text
 
 Pass encoded image bytes, a path string, or a `pathlib.Path`:
@@ -92,11 +96,10 @@ service that accepts public uploads.
 
 ## Models and license
 
-The Python API, Rust implementation, packaging, tests, and automation in this
-repository are original work by Henrique Moreira and are distributed under the
-project's MIT license. `rustcha` was inspired by
-[`sml2h3/ddddocr`](https://github.com/sml2h3/ddddocr), but has its own
-implementation and public API.
+The Rust implementation and Python API were developed by Henrique Moreira and
+are distributed under the project's MIT license. `rustcha` was inspired by
+[`sml2h3/ddddocr`](https://github.com/sml2h3/ddddocr), but the implementation
+and public API are original.
 
 The bundled OCR and detection ONNX models come from `ddddocr` and are
 distributed under its MIT license. The OCR character map is derived from that
@@ -119,14 +122,3 @@ just check
 
 `just check` runs Python lint and type checks, Rust formatting and Clippy,
 Rust unit tests, lockfile checks, and Python integration tests.
-
-Every push to `prod` checks the versions in `pyproject.toml`, `Cargo.toml`, and
-`uv.lock`. When they match and are newer than the latest `v*` tag, GitHub
-Actions builds CPython 3.11–3.15 ABI3 wheels for Linux, macOS ARM64, and Windows, publishes
-them to PyPI with `uv`, then creates the tag and GitHub release. Release notes
-list the commits since the previous tag in Keep a Changelog-style `Added`,
-`Changed`, `Fixed`, and `Removed` sections.
-
-The repository must contain a `PYPI_API_TOKEN` Actions secret. A failed release
-can be resumed with the `Publish Release` workflow's manual trigger; identical
-files already present on PyPI are checked before upload.
