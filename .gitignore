@@ -1,0 +1,30 @@
+# Folders
+.idea/
+.vscode/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+target/
+.debug/
+
+# Files
+example*.py
+
+# Extensions
+*.env
+*.log
+*.tmp
+*.bak
+*.so
+*.pyc
+
+# Build artifacts
+build/
+dist/
+site/
+*.build/
+*.dist/
+*.onefile-build/

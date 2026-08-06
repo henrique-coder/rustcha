@@ -1,0 +1,96 @@
+[build-system]
+requires = ["maturin>=1.14.0, <1.20.0"]
+build-backend = "maturin"
+
+[project]
+name = "rustcha"
+version = "0.1.0"
+description = "CAPTCHA text recognition for Python using Rust and ONNX Runtime."
+readme = "README.md"
+requires-python = ">=3.11, <3.16"
+license = "MIT"
+license-files = ["LICENSE", "licenses/*"]
+authors = [{ name = "Henrique Moreira", email = "78804989+henrique-coder@users.noreply.github.com" }]
+keywords = ["captcha", "ocr", "onnx", "python", "rust"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+    { include-group = "lint" },
+    "maturin>=1.14.0, <1.20.0",
+    "captcha~=0.7.0",
+    "rich~=15.0.0",
+]
+lint = [
+    "ruff~=0.16.0",
+    "ty~=0.0.60",
+    "zizmor~=1.29.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/henrique-coder/rustcha"
+Repository = "https://github.com/henrique-coder/rustcha.git"
+Issues = "https://github.com/henrique-coder/rustcha/issues"
+Funding = "https://github.com/sponsors/henrique-coder"
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "rustcha._rustcha"
+python-source = "python"
+include = [
+    "python/rustcha/models/**/*.onnx",
+    "python/rustcha/models/**/*.json",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py311"
+src = ["python", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "D203",
+    "D213",
+    "ISC001",
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.flake8-copyright]
+author = "Henrique Moreira"
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["rustcha"]
+lines-after-imports = 2
+split-on-trailing-comma = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "PT009", "PT027"]
+
+[tool.ruff.format]
+docstring-code-format = true
+indent-style = "space"
+line-ending = "lf"
+quote-style = "double"
+skip-magic-trailing-comma = false

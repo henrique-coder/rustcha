@@ -1,0 +1,42 @@
+name: Bug report
+description: Report reproducible behavior that appears to be broken.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest code sample that reproduces the issue.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Error output
+      description: Paste the full error with private data removed.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: rustcha version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Python 3.14 on Ubuntu 24.04"
+    validations:
+      required: true

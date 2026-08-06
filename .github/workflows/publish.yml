@@ -1,0 +1,415 @@
+name: Publish Release
+
+on:
+  push:
+    branches:
+      - prod
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      package_name: ${{ steps.release.outputs.package_name }}
+      previous_tag: ${{ steps.release.outputs.previous_tag }}
+      publish: ${{ steps.release.outputs.publish }}
+      tag: ${{ steps.release.outputs.tag }}
+      tag_exists: ${{ steps.release.outputs.tag_exists }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Checkout Production Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compare Package Versions
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/prod" ]; then
+            echo "::error::Releases can only be published from the prod branch."
+            exit 1
+          fi
+
+          mapfile -t METADATA < <(python - <<'PY'
+          import tomllib
+
+          with open("pyproject.toml", "rb") as file:
+              pyproject = tomllib.load(file)
+          with open("Cargo.toml", "rb") as file:
+              cargo = tomllib.load(file)
+          with open("uv.lock", "rb") as file:
+              lock = tomllib.load(file)
+
+          package_name = pyproject["project"]["name"]
+          lock_version = next(
+              package["version"]
+              for package in lock["package"]
+              if package["name"] == package_name
+          )
+          print(package_name)
+          print(pyproject["project"]["version"])
+          print(cargo["package"]["version"])
+          print(lock_version)
+          PY
+          )
+
+          PACKAGE_NAME=${METADATA[0]}
+          PYTHON_VERSION=${METADATA[1]}
+          RUST_VERSION=${METADATA[2]}
+          LOCK_VERSION=${METADATA[3]}
+
+          if [ "$PYTHON_VERSION" != "$RUST_VERSION" ]; then
+            echo "::error::pyproject.toml ($PYTHON_VERSION) and Cargo.toml ($RUST_VERSION) must have the same version."
+            exit 1
+          fi
+          if [ "$PYTHON_VERSION" != "$LOCK_VERSION" ]; then
+            echo "::error::uv.lock ($LOCK_VERSION) must match the project version ($PYTHON_VERSION)."
+            exit 1
+          fi
+          if ! grep -Fq "## [$PYTHON_VERSION] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md must contain a dated section for [$PYTHON_VERSION]."
+            exit 1
+          fi
+          if ! [[ "$PYTHON_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The release version must use MAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          TAG="v$PYTHON_VERSION"
+          LATEST_TAG=$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n 1)
+          PREVIOUS_TAG=$(git tag --list 'v[0-9]*' --sort=-version:refname | grep -vxF "$TAG" | head -n 1 || true)
+          TAG_EXISTS=false
+          PUBLISH=true
+
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            TAG_EXISTS=true
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              PUBLISH=false
+              echo "$TAG is already published; no release is needed."
+            elif [ "$(git rev-list -n 1 "$TAG")" != "$GITHUB_SHA" ]; then
+              echo "::error::$TAG exists without a GitHub release and points to a different commit."
+              exit 1
+            else
+              echo "Resuming the interrupted release for $TAG."
+            fi
+          elif [ -n "$LATEST_TAG" ]; then
+            LATEST_VERSION=${LATEST_TAG#v}
+            if ! [[ "$LATEST_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::The latest release tag ($LATEST_TAG) is not a supported semantic version."
+              exit 1
+            fi
+            if ! python - "$LATEST_VERSION" "$PYTHON_VERSION" <<'PY'
+          import sys
+
+          previous = tuple(map(int, sys.argv[1].split(".")))
+          current = tuple(map(int, sys.argv[2].split(".")))
+          raise SystemExit(0 if current >= previous else 1)
+          PY
+            then
+              echo "::error::Project version $PYTHON_VERSION is older than $LATEST_TAG."
+              exit 1
+            fi
+            if [ "$TAG" = "$LATEST_TAG" ]; then
+              PUBLISH=false
+            fi
+          fi
+
+          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+          echo "version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify Release Candidate
+    needs: validate
+    if: needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout Production Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.11"
+          version: "0.12.2"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: clippy, rustfmt
+          toolchain: 1.88.0
+
+      - name: Install Dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: Check Python
+        run: |
+          uv run ruff format --check python tests
+          uv run ruff check python tests
+          uv run ty check python
+
+      - name: Check Rust
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo test --locked
+
+      - name: Run Integration Tests
+        run: |
+          uv run maturin develop --release
+          uv run python -m unittest discover -s tests
+
+  wheels:
+    name: Wheel (${{ matrix.target }})
+    needs:
+      - validate
+      - verify
+    if: needs.validate.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: "off"
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: "off"
+          - os: macos-15
+            target: aarch64-apple-darwin
+            manylinux: "off"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Production Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Build Wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          args: --release --locked --out dist --compatibility pypi
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: v1.14.1
+          rust-toolchain: 1.88.0
+          sccache: true
+          target: ${{ matrix.target }}
+
+      - name: Smoke Test Wheel
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: |
+          python -c "import glob, subprocess, sys; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *glob.glob('dist/*.whl')])"
+          python -c "from rustcha import Rustcha, __version__; Rustcha(); print(__version__)"
+
+      - name: Upload Wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Source Distribution
+    needs:
+      - validate
+      - verify
+    if: needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Production Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build Source Distribution
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+          maturin-version: v1.14.1
+          rust-toolchain: 1.88.0
+
+      - name: Upload Source Distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wheel-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish_pypi:
+    name: Publish PyPI
+    needs:
+      - validate
+      - wheels
+      - sdist
+    if: needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: release
+      url: https://pypi.org/project/${{ needs.validate.outputs.package_name }}/${{ needs.validate.outputs.version }}/
+
+    steps:
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.2"
+          enable-cache: false
+
+      - name: Download Distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+
+      - name: Validate Distributions
+        run: uvx --from twine==7.0.0 twine check dist/*
+
+      - name: Publish Distributions
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        # API-token authentication is intentional for this repository.
+        # zizmor: ignore[use-trusted-publishing]
+        run: uv publish --trusted-publishing never --check-url https://pypi.org/simple/ dist/*
+
+      - name: Create Checksums
+        run: sha256sum dist/* > SHA256SUMS
+
+      - name: Upload Release Bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-bundle
+          path: |
+            dist/*
+            SHA256SUMS
+          if-no-files-found: error
+
+  create_github_release:
+    name: Create GitHub Release
+    needs:
+      - validate
+      - publish_pypi
+    if: needs.validate.outputs.publish == 'true' && needs.publish_pypi.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # Required to create the immutable tag and GitHub release.
+    environment: release
+
+    steps:
+      - name: Checkout Production Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download Release Bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-bundle
+          path: release
+
+      - name: Generate Notes from Commits
+        env:
+          PREVIOUS_TAG: ${{ needs.validate.outputs.previous_tag }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          python - "$PREVIOUS_TAG" "$GITHUB_SHA" "$RELEASE_TAG" "$GITHUB_REPOSITORY" > release_notes.md <<'PY'
+          import subprocess
+          import sys
+          from datetime import date
+
+          previous_tag, head_sha, release_tag, repository = sys.argv[1:]
+          revision = f"{previous_tag}..{head_sha}" if previous_tag else head_sha
+          output = subprocess.check_output(
+              ["git", "log", "--no-merges", "--format=%s%x09%h", revision],
+              text=True,
+          )
+
+          sections = {"Added": [], "Changed": [], "Fixed": [], "Removed": []}
+          prefixes = {
+              "Added": ("add", "feat", "feature", "new"),
+              "Fixed": ("bug", "fix", "hotfix"),
+              "Removed": ("deprecate", "remove", "drop"),
+              "Changed": ("build", "chore", "ci", "docs", "perf", "refactor", "style", "test"),
+          }
+
+          for line in output.splitlines():
+              if not line.strip():
+                  continue
+              subject, commit = line.split("\t", 1)
+              normalized = subject.lower()
+              category = "Changed"
+              for candidate, names in prefixes.items():
+                  if normalized.startswith(tuple(f"{name}:" for name in names)):
+                      category = candidate
+                      break
+              sections[category].append(f"- {subject} (`{commit}`)")
+
+          print(f"## [{release_tag.removeprefix('v')}] - {date.today().isoformat()}")
+          print()
+          for category, commits in sections.items():
+              if commits:
+                  print(f"### {category}")
+                  print()
+                  print("\n".join(reversed(commits)))
+                  print()
+          if previous_tag:
+              print(f"**Full changelog:** https://github.com/{repository}/compare/{previous_tag}...{release_tag}")
+          PY
+
+      - name: Create Immutable Tag and Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TAG_EXISTS: ${{ needs.validate.outputs.tag_exists }}
+        run: |
+          if [ "$TAG_EXISTS" != "true" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA"
+          fi
+          gh release create "$RELEASE_TAG" \
+            release/dist/* \
+            release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TAG" \
+            --notes-file release_notes.md \
+            --verify-tag
