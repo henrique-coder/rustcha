@@ -1,20 +1,21 @@
 # Copyright (c) 2026 Henrique Moreira
 
 import asyncio
-import random
+from pathlib import Path
 import struct
-import tempfile
 import unittest
 import zlib
-
-from captcha.image import ImageCaptcha
 
 from rustcha import AsyncRustcha, DetectionResult, RecognitionResult, Rustcha
 
 
-def captcha_bytes(text: str = "1234") -> bytes:
-    random.seed(0)
-    return ImageCaptcha(width=160, height=64).generate(text).read()
+ROOT = Path(__file__).parents[1]
+SAMPLE_PATH = ROOT / "samples" / "captcha.png"
+SAMPLE_TEXT = "3n3d"
+
+
+def sample_bytes() -> bytes:
+    return SAMPLE_PATH.read_bytes()
 
 
 def png_bytes(width: int, height: int) -> bytes:
@@ -31,7 +32,7 @@ class RustchaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.recognizer = Rustcha()
-        cls.image = captcha_bytes()
+        cls.image = sample_bytes()
 
     def test_recognize_bytes_with_character_filter(self) -> None:
         result = self.recognizer.recognize(self.image, allowed_characters="0123456789")
@@ -42,12 +43,10 @@ class RustchaTests(unittest.TestCase):
         self.assertEqual(result.characters, tuple(result.text))
 
     def test_recognize_path(self) -> None:
-        with tempfile.NamedTemporaryFile(suffix=".png") as image_file:
-            image_file.write(self.image)
-            image_file.flush()
-            result = self.recognizer.recognize(image_file.name)
+        result = self.recognizer.recognize(SAMPLE_PATH)
 
         self.assertIsInstance(result, RecognitionResult)
+        self.assertEqual(result.text, SAMPLE_TEXT)
 
     def test_detect(self) -> None:
         result = self.recognizer.detect(self.image)
@@ -77,7 +76,7 @@ class AsyncRustchaTests(unittest.TestCase):
     def test_recognize(self) -> None:
         async def run() -> RecognitionResult:
             recognizer = AsyncRustcha()
-            return await recognizer.recognize(captcha_bytes())
+            return await recognizer.recognize(sample_bytes())
 
         self.assertIsInstance(asyncio.run(run()), RecognitionResult)
 
