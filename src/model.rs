@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fs, path::PathBuf};
 
 use ort::{
-    session::Session,
+    session::{Session, builder::GraphOptimizationLevel},
     value::{TensorElementType, ValueType},
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
@@ -16,6 +16,7 @@ pub struct ModelResources {
     pub input: InputLayout,
 }
 
+#[derive(Clone, Copy)]
 pub struct InputLayout {
     pub height: usize,
     pub width: Option<usize>,
@@ -56,7 +57,7 @@ pub fn load_resources(py: Python<'_>) -> PyResult<ModelResources> {
     }
     validate_character_map(&character_map.characters)?;
 
-    let mut builder = Session::builder().map_err(runtime_error)?;
+    let mut builder = optimized_session_builder()?;
     let session = builder
         .commit_from_file(&model_path)
         .map_err(runtime_error)?;
@@ -71,8 +72,15 @@ pub fn load_resources(py: Python<'_>) -> PyResult<ModelResources> {
 
 pub fn load_detector(py: Python<'_>) -> PyResult<Session> {
     let model_path = package_path(py, DETECTOR_MODEL_PATH)?;
-    let mut builder = Session::builder().map_err(runtime_error)?;
+    let mut builder = optimized_session_builder()?;
     builder.commit_from_file(&model_path).map_err(runtime_error)
+}
+
+fn optimized_session_builder() -> PyResult<ort::session::builder::SessionBuilder> {
+    let builder = Session::builder().map_err(runtime_error)?;
+    builder
+        .with_optimization_level(GraphOptimizationLevel::All)
+        .map_err(runtime_error)
 }
 
 fn inspect_input(session: &Session) -> PyResult<InputLayout> {
