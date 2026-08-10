@@ -3,8 +3,7 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::{
     decoder::{self, DecodedText},
-    image_input,
-    model::{self, InputLayout},
+    image_input, model,
 };
 
 pub type DetectionBox = (i64, i64, i64, i64, f32);
@@ -19,7 +18,7 @@ pub struct Rustcha {
     session: ort::session::Session,
     detector: Option<ort::session::Session>,
     characters: Vec<String>,
-    input: InputLayout,
+    preprocessor: image_input::OcrPreprocessor,
 }
 
 #[pymethods]
@@ -31,31 +30,37 @@ impl Rustcha {
             session: resources.session,
             detector: None,
             characters: resources.characters,
-            input: resources.input,
+            preprocessor: image_input::OcrPreprocessor::new(resources.input),
         })
     }
 
-    #[pyo3(signature = (image, allowed_characters = None))]
+    #[pyo3(signature = (image, allowed_characters = None, calculate_confidence = false))]
     pub fn recognize_detailed(
         &mut self,
         py: Python<'_>,
         image: &Bound<'_, PyAny>,
         allowed_characters: Option<String>,
+        calculate_confidence: bool,
     ) -> PyResult<(String, Option<f32>)> {
         let bytes = image_input::read_image_bytes(image)?;
         py.detach(move || {
-            let decoded_image = image_input::decode_image(&bytes)?;
-            let decoded = self.recognize_image(&decoded_image, allowed_characters.as_deref())?;
+            let decoded_image = image_input::decode_image(bytes.as_ref())?;
+            let decoded = self.recognize_image(
+                &decoded_image,
+                allowed_characters.as_deref(),
+                calculate_confidence,
+            )?;
             Ok((decoded.text, decoded.confidence))
         })
     }
 
-    #[pyo3(signature = (images, allowed_characters = None))]
+    #[pyo3(signature = (images, allowed_characters = None, calculate_confidence = false))]
     pub fn batch_recognize_detailed(
         &mut self,
         py: Python<'_>,
         images: &Bound<'_, PyAny>,
         allowed_characters: Option<String>,
+        calculate_confidence: bool,
     ) -> PyResult<Vec<(String, Option<f32>)>> {
         let image_bytes = images
             .try_iter()?
@@ -63,15 +68,11 @@ impl Rustcha {
             .collect::<PyResult<Vec<_>>>()?;
 
         py.detach(move || {
-            image_bytes
-                .iter()
-                .map(|bytes| {
-                    let decoded_image = image_input::decode_image(bytes)?;
-                    let decoded =
-                        self.recognize_image(&decoded_image, allowed_characters.as_deref())?;
-                    Ok((decoded.text, decoded.confidence))
-                })
-                .collect()
+            self.recognize_batch(
+                &image_bytes,
+                allowed_characters.as_deref(),
+                calculate_confidence,
+            )
         })
     }
 
@@ -89,33 +90,39 @@ impl Rustcha {
     ) -> PyResult<Vec<DetectionBox>> {
         let bytes = image_input::read_image_bytes(image)?;
         py.detach(move || {
-            let decoded_image = image_input::decode_image(&bytes)?;
+            let decoded_image = image_input::decode_image(bytes.as_ref())?;
             self.detect_image(&decoded_image)
         })
     }
 
-    #[pyo3(signature = (image, allowed_characters = None))]
+    #[pyo3(signature = (image, allowed_characters = None, calculate_confidence = false))]
     pub fn recognize_with_positions(
         &mut self,
         py: Python<'_>,
         image: &Bound<'_, PyAny>,
         allowed_characters: Option<String>,
+        calculate_confidence: bool,
     ) -> PyResult<(String, Option<f32>, Vec<DetectionBox>)> {
         let bytes = image_input::read_image_bytes(image)?;
         py.detach(move || {
-            let decoded_image = image_input::decode_image(&bytes)?;
-            let decoded = self.recognize_image(&decoded_image, allowed_characters.as_deref())?;
+            let decoded_image = image_input::decode_image(bytes.as_ref())?;
+            let decoded = self.recognize_image(
+                &decoded_image,
+                allowed_characters.as_deref(),
+                calculate_confidence,
+            )?;
             let boxes = self.detect_image(&decoded_image)?;
             Ok((decoded.text, decoded.confidence, boxes))
         })
     }
 
-    #[pyo3(signature = (images, allowed_characters = None))]
+    #[pyo3(signature = (images, allowed_characters = None, calculate_confidence = false))]
     pub fn batch_recognize_with_positions(
         &mut self,
         py: Python<'_>,
         images: &Bound<'_, PyAny>,
         allowed_characters: Option<String>,
+        calculate_confidence: bool,
     ) -> PyResult<Vec<RecognitionWithPositions>> {
         let image_bytes = images
             .try_iter()?
@@ -123,27 +130,109 @@ impl Rustcha {
             .collect::<PyResult<Vec<_>>>()?;
 
         py.detach(move || {
-            image_bytes
-                .iter()
-                .map(|bytes| {
-                    let decoded_image = image_input::decode_image(bytes)?;
-                    let decoded =
-                        self.recognize_image(&decoded_image, allowed_characters.as_deref())?;
-                    let boxes = self.detect_image(&decoded_image)?;
-                    Ok((decoded.text, decoded.confidence, boxes))
-                })
-                .collect()
+            self.recognize_batch_with_positions(
+                &image_bytes,
+                allowed_characters.as_deref(),
+                calculate_confidence,
+            )
         })
     }
 }
 
 impl Rustcha {
+    fn recognize_batch(
+        &mut self,
+        image_bytes: &[image_input::ImageBytes],
+        allowed_characters: Option<&str>,
+        calculate_confidence: bool,
+    ) -> PyResult<Vec<(String, Option<f32>)>> {
+        if image_bytes.len() < 2 {
+            return image_bytes
+                .iter()
+                .map(|bytes| {
+                    let image = image_input::decode_image(bytes.as_ref())?;
+                    let decoded =
+                        self.recognize_image(&image, allowed_characters, calculate_confidence)?;
+                    Ok((decoded.text, decoded.confidence))
+                })
+                .collect();
+        }
+
+        let input = self.preprocessor.layout();
+        std::thread::scope(|scope| {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            scope.spawn(move || {
+                let mut preprocessor = image_input::OcrPreprocessor::new(input);
+                for bytes in image_bytes {
+                    let prepared = image_input::decode_image(bytes.as_ref())
+                        .and_then(|image| preprocessor.create_tensor(&image));
+                    if sender.send(prepared).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let mut results = Vec::with_capacity(image_bytes.len());
+            for tensor in receiver {
+                let decoded =
+                    self.recognize_tensor(tensor?, allowed_characters, calculate_confidence)?;
+                results.push((decoded.text, decoded.confidence));
+            }
+            Ok(results)
+        })
+    }
+
+    fn recognize_batch_with_positions(
+        &mut self,
+        image_bytes: &[image_input::ImageBytes],
+        allowed_characters: Option<&str>,
+        calculate_confidence: bool,
+    ) -> PyResult<Vec<RecognitionWithPositions>> {
+        let input = self.preprocessor.layout();
+        std::thread::scope(|scope| {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            scope.spawn(move || {
+                let mut preprocessor = image_input::OcrPreprocessor::new(input);
+                for bytes in image_bytes {
+                    let prepared = image_input::decode_image(bytes.as_ref()).and_then(|image| {
+                        preprocessor
+                            .create_tensor(&image)
+                            .map(|tensor| (image, tensor))
+                    });
+                    if sender.send(prepared).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let mut results = Vec::with_capacity(image_bytes.len());
+            for prepared in receiver {
+                let (image, tensor) = prepared?;
+                let decoded =
+                    self.recognize_tensor(tensor, allowed_characters, calculate_confidence)?;
+                let boxes = self.detect_image(&image)?;
+                results.push((decoded.text, decoded.confidence, boxes));
+            }
+            Ok(results)
+        })
+    }
+
     fn recognize_image(
         &mut self,
         image: &DynamicImage,
         allowed_characters: Option<&str>,
+        calculate_confidence: bool,
     ) -> PyResult<DecodedText> {
-        let tensor = image_input::create_tensor(image, &self.input)?;
+        let tensor = self.preprocessor.create_tensor(image)?;
+        self.recognize_tensor(tensor, allowed_characters, calculate_confidence)
+    }
+
+    fn recognize_tensor(
+        &mut self,
+        tensor: ort::value::Tensor<f32>,
+        allowed_characters: Option<&str>,
+        calculate_confidence: bool,
+    ) -> PyResult<DecodedText> {
         let outputs = self
             .session
             .run(ort::inputs![tensor])
@@ -151,7 +240,12 @@ impl Rustcha {
         if outputs.len() == 0 {
             return Err(PyRuntimeError::new_err("the model returned no outputs"));
         }
-        decoder::decode_text(&outputs[0], &self.characters, allowed_characters)
+        decoder::decode_text(
+            &outputs[0],
+            &self.characters,
+            allowed_characters,
+            calculate_confidence,
+        )
     }
 
     fn detect_image(&mut self, image: &DynamicImage) -> PyResult<Vec<DetectionBox>> {
@@ -192,12 +286,11 @@ fn decode_detection_output(
     if !ratio.is_finite() || ratio <= 0.0 {
         return Err("the detector received an invalid resize ratio".to_owned());
     }
-    if values.iter().any(|value| !value.is_finite()) {
-        return Err("the detector returned a non-finite value".to_owned());
-    }
-
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(64);
     for (index, row) in values.chunks_exact(DETECTOR_COLUMNS).enumerate() {
+        if row.iter().any(|value| !value.is_finite()) {
+            return Err("the detector returned a non-finite value".to_owned());
+        }
         let (stride, grid_offset) = detector_grid(index)
             .expect("the detector output length guarantees a known grid position");
         let grid_width = 416 / stride as usize;
@@ -218,7 +311,7 @@ fn decode_detection_output(
     }
 
     candidates.sort_by(|left, right| right.4.total_cmp(&left.4));
-    let mut selected: Vec<RawDetectionBox> = Vec::new();
+    let mut selected: Vec<RawDetectionBox> = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         if selected
             .iter()
