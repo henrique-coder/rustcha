@@ -10,11 +10,13 @@ class Rustcha:
         self,
         image: bytes | str | Path,
         allowed_characters: str | None = None,
+        calculate_confidence: bool = False,
     ) -> tuple[str, float | None]: ...
     def batch_recognize_detailed(
         self,
         images: list[bytes | str | Path],
         allowed_characters: str | None = None,
+        calculate_confidence: bool = False,
     ) -> list[tuple[str, float | None]]: ...
     def load_detector(self) -> None: ...
     def detect(self, image: bytes | str | Path) -> list[tuple[int, int, int, int, float]]: ...
@@ -22,9 +24,11 @@ class Rustcha:
         self,
         image: bytes | str | Path,
         allowed_characters: str | None = None,
+        calculate_confidence: bool = False,
     ) -> tuple[str, float | None, list[tuple[int, int, int, int, float]]]: ...
     def batch_recognize_with_positions(
         self,
         images: list[bytes | str | Path],
         allowed_characters: str | None = None,
+        calculate_confidence: bool = False,
     ) -> list[tuple[str, float | None, list[tuple[int, int, int, int, float]]]]: ...

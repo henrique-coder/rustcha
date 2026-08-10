@@ -41,6 +41,12 @@ class RustchaTests(unittest.TestCase):
         self.assertTrue(result.text)
         self.assertTrue(set(result.text) <= set("0123456789"))
         self.assertEqual(result.characters, tuple(result.text))
+        self.assertIsNone(result.confidence)
+
+    def test_confidence_is_opt_in(self) -> None:
+        result = self.recognizer.recognize(self.image, calculate_confidence=True)
+
+        self.assertIsNotNone(result.confidence)
 
     def test_recognize_path(self) -> None:
         result = self.recognizer.recognize(SAMPLE_PATH)
@@ -70,6 +76,12 @@ class RustchaTests(unittest.TestCase):
     def test_batch_size_must_be_positive(self) -> None:
         with self.assertRaises(ValueError):
             self.recognizer.batch_recognize([self.image], batch_size=0)
+
+    def test_batch_matches_single_recognition(self) -> None:
+        single = self.recognizer.recognize(self.image)
+        batch = self.recognizer.batch_recognize([self.image, self.image])
+
+        self.assertEqual([result.text for result in batch], [single.text, single.text])
 
 
 class AsyncRustchaTests(unittest.TestCase):

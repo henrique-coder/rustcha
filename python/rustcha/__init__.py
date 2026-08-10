@@ -39,6 +39,7 @@ class Rustcha:
         allowed_characters: str | None = None,
         *,
         include_positions: bool = False,
+        calculate_confidence: bool = False,
     ) -> RecognitionResult:
         """Recognize text from one CAPTCHA image.
 
@@ -49,6 +50,8 @@ class Rustcha:
                 The OCR model still evaluates its complete character map.
             include_positions: Include each recognized character's detected
                 bounding box. This loads the detector once when needed.
+            calculate_confidence: Calculate recognition confidence. This is
+                disabled by default to avoid an additional output pass.
 
         Returns:
             The recognized text, confidence, characters, and optional positions.
@@ -59,10 +62,14 @@ class Rustcha:
         """
         if include_positions:
             self._ensure_detection_loaded()
-            text, confidence, raw_boxes = self._native.recognize_with_positions(image, allowed_characters)
+            text, confidence, raw_boxes = self._native.recognize_with_positions(
+                image,
+                allowed_characters,
+                calculate_confidence,
+            )
             return self._recognition_result_with_positions(text, confidence, raw_boxes)
 
-        text, confidence = self._native.recognize_detailed(image, allowed_characters)
+        text, confidence = self._native.recognize_detailed(image, allowed_characters, calculate_confidence)
         return self._recognition_result(text, confidence)
 
     def batch_recognize(
@@ -72,6 +79,7 @@ class Rustcha:
         *,
         batch_size: int = 10,
         include_positions: bool = False,
+        calculate_confidence: bool = False,
     ) -> list[RecognitionResult]:
         """Recognize CAPTCHA images in input order.
 
@@ -83,6 +91,8 @@ class Rustcha:
                 positive integer.
             include_positions: Include character positions for every result.
                 This loads the detector once when needed.
+            calculate_confidence: Calculate confidence for each result. This
+                is disabled by default for lower decoding overhead.
 
         Returns:
             One result per input image, in exactly the input order.
@@ -107,13 +117,21 @@ class Rustcha:
         for start in range(0, len(images), batch_size):
             chunk = list(images[start : start + batch_size])
             if include_positions:
-                raw_results = self._native.batch_recognize_with_positions(chunk, allowed_characters)
+                raw_results = self._native.batch_recognize_with_positions(
+                    chunk,
+                    allowed_characters,
+                    calculate_confidence,
+                )
                 results.extend(
                     self._recognition_result_with_positions(text, confidence, boxes)
                     for text, confidence, boxes in raw_results
                 )
             else:
-                raw_results = self._native.batch_recognize_detailed(chunk, allowed_characters)
+                raw_results = self._native.batch_recognize_detailed(
+                    chunk,
+                    allowed_characters,
+                    calculate_confidence,
+                )
                 results.extend(self._recognition_result(text, confidence) for text, confidence in raw_results)
         return results
 
@@ -197,6 +215,7 @@ class AsyncRustcha:
         allowed_characters: str | None = None,
         *,
         include_positions: bool = False,
+        calculate_confidence: bool = False,
     ) -> RecognitionResult:
         """Recognize one image without blocking the running event loop.
 
@@ -204,6 +223,8 @@ class AsyncRustcha:
             image: Encoded image bytes, a filesystem path string, or a path.
             allowed_characters: Restrict returned characters to this string.
             include_positions: Include detected boxes for each character.
+            calculate_confidence: Calculate recognition confidence. Disabled
+                by default for lower decoding overhead.
 
         Returns:
             The recognition result.
@@ -214,6 +235,7 @@ class AsyncRustcha:
                 image,
                 allowed_characters,
                 include_positions=include_positions,
+                calculate_confidence=calculate_confidence,
             )
 
     async def batch_recognize(
@@ -223,6 +245,7 @@ class AsyncRustcha:
         *,
         batch_size: int = 10,
         include_positions: bool = False,
+        calculate_confidence: bool = False,
     ) -> list[RecognitionResult]:
         """Recognize an ordered batch without blocking the running event loop.
 
@@ -231,6 +254,7 @@ class AsyncRustcha:
             allowed_characters: Restrict returned characters to this string.
             batch_size: Maximum images in one native operation; defaults to 10.
             include_positions: Include character boxes for every image.
+            calculate_confidence: Calculate confidence for every result.
 
         Returns:
             One result per input image in input order.
@@ -242,6 +266,7 @@ class AsyncRustcha:
                 allowed_characters,
                 batch_size=batch_size,
                 include_positions=include_positions,
+                calculate_confidence=calculate_confidence,
             )
 
     async def detect(self, image: ImageSource) -> DetectionResult:

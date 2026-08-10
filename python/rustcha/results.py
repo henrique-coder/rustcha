@@ -43,7 +43,7 @@ class CharacterPosition:
 
 @dataclass(frozen=True, slots=True)
 class RecognitionResult:
-    """Text and confidence returned by the OCR model."""
+    """Text and optional confidence returned by the OCR model."""
 
     text: str
     confidence: float | None = None
