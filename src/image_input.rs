@@ -4,11 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use image::{DynamicImage, ImageReader, Limits, Rgb, RgbImage, imageops::FilterType};
+use fast_image_resize::{
+    FilterType as FastFilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image,
+};
+use image::{DynamicImage, ImageReader, Limits, imageops::FilterType};
 use ort::value::Tensor;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
+    pybacked::PyBackedBytes,
 };
 
 use crate::model::InputLayout;
@@ -17,9 +21,23 @@ const MAX_ENCODED_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 8192;
 const MAX_DECODE_ALLOCATION: u64 = 128 * 1024 * 1024;
 
-pub fn read_image_bytes(source: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    if let Ok(bytes) = source.extract::<Vec<u8>>() {
-        return validate_encoded_size(bytes);
+pub enum ImageBytes {
+    Python(PyBackedBytes),
+    Rust(Vec<u8>),
+}
+
+impl AsRef<[u8]> for ImageBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Python(bytes) => bytes,
+            Self::Rust(bytes) => bytes,
+        }
+    }
+}
+
+pub fn read_image_bytes(source: &Bound<'_, PyAny>) -> PyResult<ImageBytes> {
+    if let Ok(bytes) = source.extract::<PyBackedBytes>() {
+        return validate_encoded_size(ImageBytes::Python(bytes));
     }
 
     let path = if let Ok(path) = source.extract::<String>() {
@@ -53,22 +71,22 @@ pub fn decode_image(bytes: &[u8]) -> PyResult<DynamicImage> {
         .map_err(|error| PyValueError::new_err(format!("could not decode image: {error}")))
 }
 
-fn validate_encoded_size(bytes: Vec<u8>) -> PyResult<Vec<u8>> {
-    if bytes.len() > MAX_ENCODED_IMAGE_BYTES {
+fn validate_encoded_size(bytes: ImageBytes) -> PyResult<ImageBytes> {
+    if bytes.as_ref().len() > MAX_ENCODED_IMAGE_BYTES {
         Err(image_too_large_error())
     } else {
         Ok(bytes)
     }
 }
 
-fn read_limited_file(path: &Path) -> PyResult<Vec<u8>> {
+fn read_limited_file(path: &Path) -> PyResult<ImageBytes> {
     let file = File::open(path)
         .map_err(|error| PyValueError::new_err(format!("could not open image: {error}")))?;
     let mut bytes = Vec::new();
     file.take((MAX_ENCODED_IMAGE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| PyValueError::new_err(format!("could not read image: {error}")))?;
-    validate_encoded_size(bytes)
+    validate_encoded_size(ImageBytes::Rust(bytes))
 }
 
 fn image_too_large_error() -> PyErr {
@@ -78,21 +96,78 @@ fn image_too_large_error() -> PyErr {
     ))
 }
 
-pub fn create_tensor(image: &DynamicImage, layout: &InputLayout) -> PyResult<Tensor<f32>> {
-    let width = layout.width.unwrap_or_else(|| {
-        let ratio = image.width() as f64 / image.height().max(1) as f64;
-        ((layout.height as f64 * ratio).round() as usize).clamp(1, 4096)
-    });
-    let image = image.resize_exact(width as u32, layout.height as u32, FilterType::Triangle);
-    let pixels = pixel_values(&image, layout.channels, layout.channels_first);
-    let shape = if layout.channels_first {
-        vec![1, layout.channels, layout.height, width]
-    } else {
-        vec![1, layout.height, width, layout.channels]
-    };
+pub struct OcrPreprocessor {
+    layout: InputLayout,
+    resizer: Resizer,
+}
 
-    Tensor::from_array((shape, pixels.into_boxed_slice()))
-        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+impl OcrPreprocessor {
+    pub fn new(layout: InputLayout) -> Self {
+        Self {
+            layout,
+            resizer: Resizer::new(),
+        }
+    }
+
+    pub fn layout(&self) -> InputLayout {
+        self.layout
+    }
+
+    pub fn create_tensor(&mut self, image: &DynamicImage) -> PyResult<Tensor<f32>> {
+        let width = self.layout.width.unwrap_or_else(|| {
+            (image.width() as usize * self.layout.height / image.height().max(1) as usize)
+                .clamp(1, 4096)
+        });
+        let pixels = if self.layout.channels == 1 {
+            self.resize_grayscale(image, width as u32, self.layout.height as u32)?
+                .into_iter()
+                .map(|value| f32::from(value) / 255.0)
+                .collect()
+        } else {
+            let resized = image.resize_exact(
+                width as u32,
+                self.layout.height as u32,
+                FilterType::Triangle,
+            );
+            pixel_values(&resized, self.layout.channels, self.layout.channels_first)
+        };
+        let shape = if self.layout.channels_first {
+            [1, self.layout.channels, self.layout.height, width]
+        } else {
+            [1, self.layout.height, width, self.layout.channels]
+        };
+
+        Tensor::from_array((shape, pixels.into_boxed_slice())).map_err(runtime_error)
+    }
+
+    fn resize_grayscale(
+        &mut self,
+        image: &DynamicImage,
+        width: u32,
+        height: u32,
+    ) -> PyResult<Vec<u8>> {
+        let grayscale = image.to_luma8();
+        let source = Image::from_vec_u8(
+            grayscale.width(),
+            grayscale.height(),
+            grayscale.into_raw(),
+            PixelType::U8,
+        )
+        .map_err(runtime_error)?;
+        let mut destination = Image::new(width, height, PixelType::U8);
+        self.resizer
+            .resize(
+                &source,
+                &mut destination,
+                &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FastFilterType::Bilinear)),
+            )
+            .map_err(runtime_error)?;
+        Ok(destination.into_vec())
+    }
+}
+
+fn runtime_error(error: impl ToString) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
 }
 
 pub fn create_detection_tensor(image: &DynamicImage) -> PyResult<(Tensor<f32>, u32, u32, f32)> {
@@ -108,16 +183,16 @@ pub fn create_detection_tensor(image: &DynamicImage) -> PyResult<(Tensor<f32>, u
         resized_height.max(1),
         FilterType::Triangle,
     );
-    let mut canvas = RgbImage::from_pixel(416, 416, Rgb([114, 114, 114]));
-    image::imageops::overlay(&mut canvas, &resized, 0, 0);
-    let mut values = vec![0.0_f32; 3 * 416 * 416];
-    for (index, pixel) in canvas.pixels().enumerate() {
+    const DETECTOR_AREA: usize = 416 * 416;
+    let mut values = vec![114.0_f32; 3 * DETECTOR_AREA];
+    for (x, y, pixel) in resized.enumerate_pixels() {
+        let index = y as usize * 416 + x as usize;
         values[index] = f32::from(pixel[2]);
-        values[416 * 416 + index] = f32::from(pixel[1]);
-        values[2 * 416 * 416 + index] = f32::from(pixel[0]);
+        values[DETECTOR_AREA + index] = f32::from(pixel[1]);
+        values[2 * DETECTOR_AREA + index] = f32::from(pixel[0]);
     }
 
-    Tensor::from_array((vec![1, 3, 416, 416], values.into_boxed_slice()))
+    Tensor::from_array(([1, 3, 416, 416], values.into_boxed_slice()))
         .map(|tensor| (tensor, original_width, original_height, ratio))
         .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
 }
