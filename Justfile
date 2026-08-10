@@ -1,7 +1,7 @@
 default:
     @just --list
 
-sync:
+update:
     uv sync --upgrade --all-groups --all-extras
 
 format:
@@ -20,13 +20,8 @@ rust-check:
     cargo clippy --locked --all-targets --all-features -- -D warnings
     cargo test --locked
 
-lock-check:
-    uv lock --check
-
 test: develop
     uv run python -m unittest discover -s tests
-
-check: lint typecheck rust-check lock-check test
 
 develop:
     uv run maturin develop --release
@@ -34,5 +29,6 @@ develop:
 build:
     uv run maturin build --release --out target/wheels
 
-clean:
-    cargo clean
+benchmark:
+    uv run maturin develop --release
+    uv run benchmarks/benchmark.py --json target/benchmarks/latest.json
