@@ -31,4 +31,4 @@ build:
 
 benchmark:
     uv run maturin develop --release
-    uv run benchmarks/benchmark.py --json target/benchmarks/latest.json
+    uv run benchmarks/benchmark.py --json target/benchmarks/latest.json --report target/benchmarks/latest.md
