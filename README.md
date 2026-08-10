@@ -4,6 +4,10 @@
 Rust extension and bundled ONNX models, so inference does not require a network
 connection.
 
+See the [benchmark guide](docs/BENCHMARKS.md) for reproducible comparisons with
+`ddddocr`, including the exact corpus, Python versions, supported operating
+systems, throughput, startup time, and batch measurements.
+
 ## Install
 
 ```bash
@@ -25,7 +29,7 @@ Pass encoded image bytes, a path string, or a `pathlib.Path`:
 from rustcha import Rustcha
 
 recognizer = Rustcha()
-result = recognizer.recognize(image_bytes)
+result = recognizer.recognize(image_bytes, calculate_confidence=True)
 
 print(result.text)
 print(result.confidence)
@@ -37,8 +41,10 @@ print(result.confidence)
 digits = recognizer.recognize(image_bytes, allowed_characters="0123456789")
 ```
 
-Confidence is the geometric mean of the selected character probabilities. It
-is `None` when the model returns no characters.
+Confidence calculation is optional because it requires an additional pass over
+the model output. Pass `calculate_confidence=True` when needed. Confidence is
+the geometric mean of the selected character probabilities and is `None` when
+disabled or when the model returns no characters.
 
 ## Detect character regions
 
@@ -70,7 +76,8 @@ detection.
 ## Batches and asyncio
 
 One recognizer reuses one OCR session. `batch_size` limits how many encoded
-images enter one native call; the model still evaluates images one at a time.
+images enter one native call. The model evaluates images one at a time while a
+native pipeline decodes and resizes the next image concurrently.
 
 ```python
 results = recognizer.batch_recognize(images, batch_size=10)
@@ -119,6 +126,15 @@ uv sync --all-groups
 uv run maturin develop
 just check
 ```
+
+## Benchmarks
+
+The reproducible comparison with the original `ddddocr` implementation is
+documented in [docs/BENCHMARKS.md](docs/BENCHMARKS.md). It uses identical image
+bytes, realistic volumes, warmup, medians, throughput, and output agreement.
+Run it locally with `uv sync --group benchmark` followed by `just benchmark`, or
+start the manual GitHub Actions workflow to compare all supported Python
+versions and operating systems.
 
 `just check` runs Python lint and type checks, Rust formatting and Clippy,
 Rust unit tests, lockfile checks, and Python integration tests.
