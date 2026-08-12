@@ -54,12 +54,14 @@ class Rustcha:
                 disabled by default to avoid an additional output pass.
 
         Returns:
-            The recognized text, confidence, characters, and optional positions.
+            Lowercase recognized text, confidence, characters, and optional
+            positions. Uppercase and lowercase glyphs share one output class.
 
         Raises:
             ValueError: If the image cannot be read or decoded.
             RuntimeError: If ONNX model loading or inference fails.
         """
+        allowed_characters = self._normalize_allowed_characters(allowed_characters)
         if include_positions:
             self._ensure_detection_loaded()
             text, confidence, raw_boxes = self._native.recognize_with_positions(
@@ -95,7 +97,7 @@ class Rustcha:
                 is disabled by default for lower decoding overhead.
 
         Returns:
-            One result per input image, in exactly the input order.
+            One lowercase result per input image, in exactly the input order.
 
         Raises:
             ValueError: If ``batch_size`` is less than one or an image cannot
@@ -110,6 +112,7 @@ class Rustcha:
             message = "batch_size must be at least 1"
             raise ValueError(message)
 
+        allowed_characters = self._normalize_allowed_characters(allowed_characters)
         if include_positions:
             self._ensure_detection_loaded()
 
@@ -162,6 +165,7 @@ class Rustcha:
 
     @staticmethod
     def _recognition_result(text: str, confidence: float | None) -> RecognitionResult:
+        text = text.lower()
         return RecognitionResult(text=text, confidence=confidence, characters=tuple(text))
 
     @classmethod
@@ -171,6 +175,7 @@ class Rustcha:
         confidence: float | None,
         raw_boxes: Sequence[tuple[int, int, int, int, float]],
     ) -> RecognitionResult:
+        text = text.lower()
         boxes = tuple(sorted(cls._boxes(raw_boxes), key=lambda box: box.x_min))
         return RecognitionResult(
             text=text,
@@ -181,6 +186,12 @@ class Rustcha:
                 for index, character in enumerate(text)
             ),
         )
+
+    @staticmethod
+    def _normalize_allowed_characters(allowed_characters: str | None) -> str | None:
+        if allowed_characters is None:
+            return None
+        return "".join(dict.fromkeys(allowed_characters.lower()))
 
     @staticmethod
     def _boxes(raw_boxes: Sequence[tuple[int, int, int, int, float]]) -> tuple[BoundingBox, ...]:
