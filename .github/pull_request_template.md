@@ -16,5 +16,4 @@
 - [ ] I added or updated tests where needed.
 - [ ] I updated the README or changelog where needed.
 - [ ] I removed secrets and local files from the diff.
-- [ ] I ran `just check`.
 - [ ] This PR targets `prod`.
