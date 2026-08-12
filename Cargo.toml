@@ -18,8 +18,8 @@ name = "_rustcha"
 crate-type = ["cdylib"]
 
 [dependencies]
-fast_image_resize = { version = "6.1.0", default-features = false, features = ["std"] }
-image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+fast_image_resize = { version = "=6.1.0", default-features = false, features = ["std"] }
+image = { version = "=0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 
 ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "copy-dylibs",
