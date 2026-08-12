@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Optional confidence:** Disabled confidence calculation by default and added `calculate_confidence=True` for callers that need it.
 - **Recognition performance:** Removed Python byte copies, added SIMD grayscale resizing, enabled all ONNX graph optimizations, and pipelined batch preprocessing with inference.
+- **Case-insensitive recognition:** Normalized recognized letters and character restrictions to lowercase across the public API.
 
 ## [0.1.0] - 2026-08-06
 
