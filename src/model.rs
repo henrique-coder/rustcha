@@ -44,6 +44,34 @@ fn package_path(py: Python<'_>, relative_path: &str) -> PyResult<PathBuf> {
 
 pub fn load_resources(py: Python<'_>) -> PyResult<ModelResources> {
     let model_path = package_path(py, MODEL_PATH)?;
+    let mut builder = optimized_session_builder()?;
+    let session = builder
+        .commit_from_file(&model_path)
+        .map_err(runtime_error)?;
+    let characters = load_characters(py, &session)?;
+    let input = inspect_input(&session)?;
+
+    Ok(ModelResources {
+        session,
+        characters,
+        input,
+    })
+}
+
+fn load_characters(py: Python<'_>, session: &Session) -> PyResult<Vec<String>> {
+    if let Some(charset) = session
+        .metadata()
+        .map_err(runtime_error)?
+        .custom("rustcha.charset")
+        .filter(|charset| !charset.is_empty())
+    {
+        let mut characters = Vec::with_capacity(charset.chars().count() + 1);
+        characters.push(String::new());
+        characters.extend(charset.chars().map(|character| character.to_string()));
+        validate_character_map(&characters)?;
+        return Ok(characters);
+    }
+
     let characters_path = package_path(py, CHARACTERS_PATH)?;
     let characters_bytes = fs::read(&characters_path).map_err(|error| {
         PyRuntimeError::new_err(format!("could not read character map: {error}"))
@@ -56,18 +84,7 @@ pub fn load_resources(py: Python<'_>) -> PyResult<ModelResources> {
         return Err(PyRuntimeError::new_err("unsupported character map format"));
     }
     validate_character_map(&character_map.characters)?;
-
-    let mut builder = optimized_session_builder()?;
-    let session = builder
-        .commit_from_file(&model_path)
-        .map_err(runtime_error)?;
-    let input = inspect_input(&session)?;
-
-    Ok(ModelResources {
-        session,
-        characters: character_map.characters,
-        input,
-    })
+    Ok(character_map.characters)
 }
 
 pub fn load_detector(py: Python<'_>) -> PyResult<Session> {
