@@ -1,5 +1,7 @@
 [build-system]
-requires = ["maturin>=1.14.0, <1.20.0"]
+requires = [
+    "maturin>=1.14.0, <1.20.0"
+]
 build-backend = "maturin"
 
 [project]
@@ -33,30 +35,12 @@ dependencies = []
 dev = [
     { include-group = "lint" },
     "maturin>=1.14.0, <1.20.0",
-    "rich>=15.0.0",
 ]
 lint = [
-    "ruff~=0.16.0",
-    "ty~=0.0.60",
-    "zizmor~=1.29.0",
+    "ruff>=0.16.0",
+    "ty>=0.0.70",
+    "zizmor>=1.29.0",
 ]
-benchmark = [
-    "captcha>=0.7.0",
-    "ddddocr==1.6.1",
-]
-train = [
-    "captcha>=0.7.1",
-    "pillow>=12.3.0",
-    "rich>=15.0.0",
-    "torch>=2.13.0",
-    "torchvision>=0.28.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/henrique-coder/rustcha"
-Repository = "https://github.com/henrique-coder/rustcha.git"
-Issues = "https://github.com/henrique-coder/rustcha/issues"
-Funding = "https://github.com/sponsors/henrique-coder"
 
 [tool.maturin]
 bindings = "pyo3"
@@ -66,6 +50,12 @@ include = [
     "python/rustcha/models/**/*.onnx",
     "python/rustcha/models/**/*.json",
 ]
+
+[project.urls]
+Homepage = "https://github.com/henrique-coder/rustcha"
+Repository = "https://github.com/henrique-coder/rustcha.git"
+Issues = "https://github.com/henrique-coder/rustcha/issues"
+Funding = "https://github.com/sponsors/henrique-coder"
 
 [tool.ruff]
 line-length = 120
@@ -81,6 +71,7 @@ ignore = [
     "D213",
     "ISC001",
 ]
+
 fixable = ["ALL"]
 unfixable = []
 
