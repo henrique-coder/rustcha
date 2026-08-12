@@ -161,7 +161,7 @@ jobs:
           toolchain: 1.88.0
 
       - name: Install Dependencies
-        run: uv sync --frozen --all-groups
+        run: uv sync --frozen --group dev
 
       - name: Check Python
         run: |
