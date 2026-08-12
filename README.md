@@ -4,10 +4,6 @@
 Rust extension and bundled ONNX models, so inference does not require a network
 connection.
 
-See the [benchmark guide](docs/BENCHMARKS.md) for reproducible comparisons with
-`ddddocr`, including the exact corpus, Python versions, supported operating
-systems, throughput, startup time, and batch measurements.
-
 ## Install
 
 ```bash
@@ -118,23 +114,3 @@ and the upstream license is included in
 
 OCR output is probabilistic. Do not use it as an authentication or
 authorization decision without independent validation.
-
-## Development
-
-```bash
-uv sync --all-groups
-uv run maturin develop
-just check
-```
-
-## Benchmarks
-
-The reproducible comparison with the original `ddddocr` implementation is
-documented in [docs/BENCHMARKS.md](docs/BENCHMARKS.md). It uses identical image
-bytes, realistic volumes, warmup, medians, throughput, and output agreement.
-Run it locally with `uv sync --group benchmark` followed by `just benchmark`, or
-start the manual GitHub Actions workflow to compare all supported Python
-versions and operating systems.
-
-`just check` runs Python lint and type checks, Rust formatting and Clippy,
-Rust unit tests, lockfile checks, and Python integration tests.
