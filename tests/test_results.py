@@ -12,7 +12,7 @@ class ResultTests(unittest.TestCase):
         result = RecognitionResult(text="abc", characters=("a", "b", "c"))
 
         with self.assertRaises(FrozenInstanceError):
-            result.text = "changed"  # type: ignore[misc]
+            result.text = "changed"  # ty: ignore[invalid-assignment]
 
     def test_bounding_box_validates_coordinates(self) -> None:
         with self.assertRaises(ValueError):
