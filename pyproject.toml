@@ -39,7 +39,7 @@ dev = [
 lint = [
     "ruff~=0.16.0",
     "ty~=0.0.60",
-    "zizmor~=1.29.0",
+    "zizmor>=1.29,<1.31",
 ]
 
 [project.urls]
